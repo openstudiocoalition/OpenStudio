@@ -903,7 +903,7 @@ add_dependencies(ALL_RUBY_BINDINGS ${ALL_RUBY_BINDING_TARGETS})
 
 if(BUILD_PYTHON_BINDINGS)
   add_custom_target(ALL_PYTHON_BINDINGS)
-  #add_dependencies(ALL_PYTHON_BINDINGS python_sdk ${ALL_PYTHON_BINDING_TARGETS})
+  add_dependencies(ALL_PYTHON_BINDINGS ${ALL_PYTHON_BINDING_TARGETS})
 endif()
 
 
