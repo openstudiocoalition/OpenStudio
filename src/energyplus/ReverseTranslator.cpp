@@ -804,6 +804,11 @@ boost::optional<ModelObject> ReverseTranslator::translateAndMapWorkspaceObject(c
       modelObject = translateOutputVariable(workspaceObject);
       break;
     }
+  case openstudio::IddObjectType::OutputControl_Files:
+  {
+    modelObject = translateOutputControlFiles(workspaceObject);
+    break;
+  }
   case openstudio::IddObjectType::OutputControl_Table_Style :
     {
       break; // no-op
