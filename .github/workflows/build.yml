@@ -1,0 +1,196 @@
+name: C++ CI for OpenStudio
+
+on:
+  push:
+    branches: [ ci-builder ]
+  pull_request:
+    branches: [ ci-builder ]
+
+env:
+  BUILD_TYPE: Release
+  BUILD_DOCUMENTATION: OFF
+  BUILD_TESTING: ON
+  BUILD_PACKAGE: ON
+  CPACK_BINARY_NSIS: OFF
+  CPACK_BINARY_RPM: OFF
+  CPACK_BINARY_STGZ: OFF
+  CPACK_BINARY_TBZ2: OFF
+  CPACK_BINARY_TGZ: ON
+  CPACK_BINARY_TXZ: OFF
+  CPACK_BINARY_TZ: OFF
+  CPACK_SOURCE_RPM:BOOL: OFF
+  CPACK_SOURCE_TBZ2:BOOL: OFF
+  CPACK_SOURCE_TGZ:BOOL: OFF
+  CPACK_SOURCE_TXZ:BOOL: OFF
+  CPACK_SOURCE_TZ:BOOL: OFF
+  CPACK_SOURCE_ZIP:BOOL: OFF
+  # CPACK_BINARY_DEB: OS-SPECIFIC
+  # CPACK_BINARY_IFW: OS-SPECIFIC
+
+jobs:
+  build:
+    # runs-on: ubuntu-18.04
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # fail-fast: Default is true, switch to false to allow one platform to fail and still run others
+      fail-fast: false
+      matrix:
+        os: [ubuntu-18.04] #, windows-2019, macos-10.15]
+        include:
+        - os: ubuntu-18.04
+          PLATFORM_NAME: Linux
+          CPACK_BINARY_DEB: ON
+          CPACK_BINARY_IFW: OFF
+          BINARY_EXT: deb
+        - os: windows-2019
+          PLATFORM_NAME: Windows
+          CPACK_BINARY_DEB: OFF
+          CPACK_BINARY_IFW: ON
+          BINARY_EXT: exe
+        - os: macos-10.15
+          PLATFORM_NAME: Darwin
+          CPACK_BINARY_DEB: OFF
+          CPACK_BINARY_IFW: ON
+          BINARY_EXT: dmg
+          MACOSX_DEPLOYMENT_TARGET: 10.14
+          SDKROOT: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: '3.8.x'
+    - name: Extract OS SDK version from FindOpenStudioSDK.cmake
+      shell: python
+      run: |
+        import re
+        with open('CMakeLists.txt', 'r') as f:
+            content = f.read()
+        regex = re.search('project\(OpenStudio VERSION (\d+\.\d+\.\d+)\)', content)
+        sdk_version = 'unknown'
+        if regex:
+            sdk_version = regex.groups()[0]
+        with open('sdk_version.txt', 'w') as f:
+            f.write(sdk_version)
+
+        print("::set-env name=OS_VERSION::{}".format(sdk_version))
+
+    - name: Install conan
+      run: |
+          python --version
+          pip install conan
+          conan --version
+
+    - name: Cache conan cache?
+      # To avoid downloading the SDK all the time, we try to cache it
+      id: cacheconan
+      uses: actions/cache@v2
+      with:
+        path: ~/.conan
+        key: ${{ runner.os }}-conan-cache
+
+    - name: Did restoring the conan-cache work? No
+      # If the SDK wasn't found in the cache
+      if: steps.cacheconan.outputs.cache-hit != 'true'
+      run: |
+          echo "Conan cache not found"
+
+    - name: Did restoring the conan-cache work? Yes
+      # If the SDK wasn't found in the cache
+      if: steps.cacheconan.outputs.cache-hit == 'true'
+      run: |
+          ls ~/.conan/
+          ls ~/.conan/data/
+
+    - name: Cache entire build directory
+      id: cachebuild
+      uses: actions/cache@v2
+      with:
+        path: build/
+        key: ${{ runner.os }}-build-cache
+
+    - name: Did restoring the build-cache work? No
+      # If the SDK wasn't found in the cache
+      if: steps.cachebuild.outputs.cache-hit != 'true'
+      run: |
+          echo "Build cache not found"
+
+    - name: Did restoring the build-cache work? Yes
+      # If the SDK wasn't found in the cache
+      if: steps.cachebuild.outputs.cache-hit == 'true'
+      run: |
+          ls build/
+          cat build/CMakeCache.txt
+
+    - name: Create Build Environment
+      # Some projects don't allow in-source building, so create a separate build directory
+      # We'll use this as our working directory for all subsequent commands
+      shell: bash
+      run: |
+        cmake -E make_directory ./build
+
+
+    - name: Configure CMake
+      # Use a bash shell so we can use the same syntax for environment variable
+      # access regardless of the host operating system
+      shell: bash
+      working-directory: ./build
+      # Note the current convention is to use the -S and -B options here to specify source
+      # and build directories, but this is only available with CMake 3.13 and higher.
+      # The CMake binaries on the Github Actions machines are (as of this writing) 3.12
+      run: |
+        cmake $CMAKE_GENERATOR $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DBUILD_DOCUMENTATION=$DBUILD_DOCUMENTATION -DBUILD_TESTING=$BUILD_TESTING -DBUILD_PACKAGE=$BUILD_PACKAGE -DCPACK_BINARY_DEB=$CPACK_BINARY_DEB -DCPACK_BINARY_IFW=$CPACK_BINARY_IFW -DCPACK_BINARY_NSIS=$CPACK_BINARY_NSIS -DCPACK_BINARY_RPM=$CPACK_BINARY_RPM -DCPACK_BINARY_STGZ=$CPACK_BINARY_STGZ -DCPACK_BINARY_TBZ2=$CPACK_BINARY_TBZ2 -DCPACK_BINARY_TGZ=$CPACK_BINARY_TGZ -DCPACK_BINARY_TXZ=$CPACK_BINARY_TXZ -DCPACK_BINARY_TZ=$CPACK_BINARY_TZ -DCPACK_SOURCE_RPM=$CPACK_SOURCE_RPM -DCPACK_SOURCE_TBZ2=$CPACK_SOURCE_TBZ2 -DCPACK_SOURCE_TGZ=$CPACK_SOURCE_TGZ -DCPACK_SOURCE_TXZ=$CPACK_SOURCE_TXZ -DCPACK_SOURCE_TZ=$CPACK_SOURCE_TZ -DCPACK_SOURCE_ZIP=$CPACK_SOURCE_ZIP ../
+
+    # Note: JM 2020-07-22 This is an example of how to get a config log for a failed conan dependency build (no binary available)
+    # This WILL be handy some day, so leave it here
+    #- name: upload config.log for failed gdbm build
+      #if: ${{ failure() }}
+      #shell: bash
+      #run: |
+        #configlog=$(find ~/.conan/data/gdbm/1.18.1/_/_/build -name config.log)
+        #cat $configlog
+
+    #- name: upload config.log for failed gdbm build
+      #if: ${{ failure() }}
+      #uses: actions/upload-artifact@v2
+      #with:
+          #name: ${{ runner.os }}-gdbm_config.log
+          #path: ~/.conan/data/gdbm/1.18.1/_/_/build/**/source_subfolder/config.log
+
+    - name: Build
+      working-directory: ./build
+      shell: bash
+      # Execute the build.  You can specify a specific target with "--target <NAME>"
+      run: cmake --build . --target package --config $BUILD_TYPE
+
+    - name: Archive binary artifacts
+      uses: actions/upload-artifact@v2
+      # build/_CPack_Packages/win64/IFW/*.exe
+      # build/_CPack_Packages/Linux/DEB/*.deb
+      # build/_CPack_Packages/Darwin/IFW/*.dmg
+      with:
+          name: OpenStudio-${{ env.OS_VERSION }}.${{ github.sha }}-${{ env.PLATFORM_NAME }}.${{ env.BINARY_EXT }}
+          path: build/_CPack_Packages/*/*/*.${{ env.BINARY_EXT }}
+
+    - name: Archive TGZ artifacts
+      uses: actions/upload-artifact@v2
+      with:
+          name: OpenStudio-${{ env.OS_VERSION }}.${{ github.sha }}-${{ env.PLATFORM_NAME }}.tar.gz
+          path: build/_CPack_Packages/*/TGZ/*.tar.gz
+
+    - name: Test
+      working-directory: ./build
+      shell: bash
+      # Execute tests defined by the CMake configuration.
+      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
+      run: |
+          Xvfb :99 &
+          export DISPLAY=:99
+          ctest -j -T test --no-compress-output -c $BUILD_TYPE || true
+
+    - name: Archive test results?
+      uses: actions/upload-artifact@v2
+      with:
+          name: OpenStudio-${{ env.OS_VERSION }}.${{ github.sha }}-${{ env.PLATFORM_NAME }}-Test.xml
+          path: build/Testing/**/*.xml
+
